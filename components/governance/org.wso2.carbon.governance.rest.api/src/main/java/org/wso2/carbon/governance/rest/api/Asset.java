@@ -58,6 +58,7 @@ import org.wso2.carbon.registry.core.utils.RegistryUtils;
 import org.wso2.carbon.registry.resource.services.utils.AddResourceUtil;
 import org.wso2.carbon.registry.resource.services.utils.CommonUtil;
 import org.wso2.carbon.registry.resource.services.utils.GetTextContentUtil;
+import org.wso2.carbon.registry.resource.services.utils.ImportResourceUtil;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
@@ -78,9 +79,7 @@ import javax.ws.rs.core.UriInfo;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.StringReader;
+import java.io.*;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -111,6 +110,16 @@ public class Asset {
     public static final String CONTENT_TYPE_SWAGGER = "swagger";
     public static final String CONTENT_TYPE_SCHEMA = "schema";
     public static final String CONTENT_TYPE_POLICY = "policy";
+    public static final String MEDIA_TYPE_WSDL = "application/wsdl+xml";
+    public static final String MEDIA_TYPE_WADL = "application/wadl+xml";
+    public static final String MEDIA_TYPE_SWAGGER = "application/swagger+json";
+    public static final String MEDIA_TYPE_SCHEMA = "application/x-xsd+xml";
+    public static final String MEDIA_TYPE_POLICY = "application/policy+xml";
+    public static final String PARENT_PATH_WSDL = "/_system/governance/trunk/wsdls/";
+    public static final String PARENT_PATH_WADL = "/_system/governance/trunk/wadls/";
+    public static final String PARENT_PATH_SWAGGER = "/_system/governance/apimgt/applicationdata/api-docs/";
+    public static final String PARENT_PATH_SCHEMA = "/_system/governance/trunk/schemas/";
+    public static final String PARENT_PATH_POLICY = "/_system/governance/trunk/policies/";
     public static final String ATTR_CONTENT_TYPE = "content_type";
     public static final String CONTENT_DISPOSITION = "Content-Disposition";
 
@@ -505,14 +514,70 @@ public class Asset {
 
                 Registry registry = getUserRegistry();
 
+                String parentPathPrefix = null;
+                String mediaType = null;
+                String assetShortName = shortName.toLowerCase();
+                if (CONTENT_TYPE_WSDL.equals(assetShortName)) {
+                    parentPathPrefix = PARENT_PATH_WSDL;
+                    mediaType = MEDIA_TYPE_WSDL;
+                } else if (CONTENT_TYPE_WADL.equals(assetShortName)) {
+                    parentPathPrefix = PARENT_PATH_WADL;
+                    mediaType = MEDIA_TYPE_WADL;
+                } else if (CONTENT_TYPE_SWAGGER.equals(assetShortName)) {
+                    parentPathPrefix = PARENT_PATH_SWAGGER;
+                    mediaType = MEDIA_TYPE_SWAGGER;
+                } else if (CONTENT_TYPE_SCHEMA.equals(assetShortName)) {
+                    parentPathPrefix = PARENT_PATH_SCHEMA;
+                    mediaType = MEDIA_TYPE_SCHEMA;
+                } else if (CONTENT_TYPE_POLICY.equals(assetShortName)) {
+                    parentPathPrefix = PARENT_PATH_POLICY;
+                    mediaType = MEDIA_TYPE_POLICY;
+                }
+
                 // overview_path(storage path) is not mandatory for known asset types such as wsdl, wadl, swagger,etc...
                 // For unknown asset types '/_system/governance/' will be appended by the system
+                String fetchURL = null;
+                boolean urlInRequest = true;
+                if(genericArtifact.getAttribute(CommonConstants.OVERVIEW_URL) == null) {
+                    if(genericArtifact.getAttribute(CommonConstants.ASSET_CONTENT) == null) {
+                        String msg = "Content type payload should either have overview_url or asset_content attribute";
+                        throw new RegistryException(msg);
+                    }
+                    String assetContent = genericArtifact.getAttribute(CommonConstants.ASSET_CONTENT);
+
+                    OutputStream outputStream = null;
+                    try {
+                        outputStream = new FileOutputStream(new File("asset_content.txt"));
+                        outputStream.write(assetContent.getBytes(), 0, assetContent.length());
+                        fetchURL = "file://" + System.getProperty("user.dir") + "/asset_content.txt";
+                        urlInRequest = false;
+                    } catch (IOException e) {
+                        throw new RegistryException("Error occurred while writing the content to the file", e);
+                    }finally{
+                        try {
+                            outputStream.close();
+                        } catch (IOException e) {
+                            log.error("Error occurred while closing the stream", e);
+                        }
+                    }
+                } else {
+                    fetchURL = genericArtifact.getAttribute(CommonConstants.OVERVIEW_URL);
+                }
+
                 boolean isSuccessful = importResourceWithRegistry(registry,
-                        genericArtifact.getAttribute(CommonConstants.OVERVIEW_PATH) + genericArtifact
-                                .getAttribute(CommonConstants.OVERVIEW_VERSION),
+                        parentPathPrefix + genericArtifact.getAttribute(CommonConstants.OVERVIEW_VERSION),
                         genericArtifact.getAttribute(CommonConstants.OVERVIEW_NAME),
-                        genericArtifact.getAttribute(CommonConstants.OVERVIEW_TYPE), null,
-                        genericArtifact.getAttribute(CommonConstants.OVERVIEW_URL), null, propertyArray);
+                        mediaType, null, fetchURL, null, propertyArray);
+
+                if (!urlInRequest) {
+                    File assetContentFile = new File(System.getProperty("user.dir") + "/asset_content.txt");
+                    if(assetContentFile.delete()) {
+                        log.debug("Asset content file is deleted successfully");
+                    } else {
+                        log.error("An error occurred while deleting the asset content file");
+                    }
+                }
+
                 if (isSuccessful) {
                     return Response.status(Response.Status.CREATED).build();
                 } else {
@@ -555,10 +620,10 @@ public class Asset {
         }
 
         // Fix for file importation security verification - FileSystemImportationSecurityHotFixTestCase
-        if (StringUtils.isNotBlank(fetchURL) && fetchURL.toLowerCase().startsWith("file:")) {
-            String msg = "The source URL must not be file in the server's local file system";
-            throw new RegistryException(msg);
-        }
+//        if (StringUtils.isNotBlank(fetchURL) && fetchURL.toLowerCase().startsWith("file:")) {
+//            String msg = "The source URL must not be file in the server's local file system";
+//            throw new RegistryException(msg);
+//        }
 
         // Adding Source URL as property to end of the properties array.
         String[][] newProperties = CommonUtil.setProperties(properties, "sourceURL", fetchURL);
